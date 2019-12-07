@@ -1,0 +1,523 @@
+---
+title: "Bank Marketing"
+author: "Marzuq Khan and Kartik Vaish"
+date: "12/07/2019"
+output: pdf_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+# The Data Set
+
+We used the professor's link; http://archive.ics.uci.edu/ml/index.php, where we found this data set on bank marketing at this link; http://archive.ics.uci.edu/ml/datasets/Bank+Marketing. The summary is that, "The data is related with direct marketing campaigns of a Portuguese banking institution. The marketing campaigns were based on phone calls. Often, more than one contact to the same client was required, in order to access if the product (bank term deposit) would be ('yes') or not ('no') subscribed". We look at the full data set with 41,188 observations and 21 total variables, ordered by date from May 2008 to November 2010.
+
+```{r, message=FALSE}
+library(data.table)
+library(tidyverse)
+library(lubridate)
+library(perturb) 
+library(car)
+library(pROC)
+library(tree)
+library(ISLR)
+library(class)
+library(MASS)
+BankM <- fread("data/bank-additional-full.csv")
+glimpse(BankM)
+```
+
+### 7 Variables Related to Bank-Client Data:
+
+1 - age (numeric)
+
+2 - job : type of job (categorical: 'admin.', 'blue-collar', 'entrepreneur', 'housemaid', 'management', 'retired', 'self-employed', 'services', 'student', 'technician', 'unemployed', 'unknown')
+
+3 - marital : marital status (categorical: 'divorced','married','single','unknown'; note: 'divorced' means divorced or widowed)
+
+4 - education (categorical: 'basic.4y','basic.6y','basic.9y','high.school','illiterate','professional.course','university.degree','unknown')
+
+5 - default: has credit in default? (categorical: 'no','yes','unknown')
+
+6 - housing: has housing loan? (categorical: 'no','yes','unknown')
+
+7 - loan: has personal loan? (categorical: 'no','yes','unknown')
+
+### 4 Variables Related to the Last Contact of the Current Campaign:
+
+8 - contact: contact communication type (categorical: 'cellular','telephone')
+
+9 - month: last contact month of year (categorical: 'jan', 'feb', 'mar', ..., 'nov', 'dec')
+
+10 - day_of_week: last contact day of the week (categorical: 'mon','tue','wed','thu','fri')
+
+11 - duration: last contact duration, in seconds (numeric). Important note: this attribute highly affects the output target (e.g., if duration=0 then y='no'). Yet, the duration is not known before a call is performed. Also, after the end of the call y is obviously known. Thus, this input should only be included for benchmark purposes and should be discarded if the intention is to have a realistic predictive model.
+
+### 4 Variables Related to Other Attributes:
+
+12 - campaign: number of contacts performed during this campaign and for this client (numeric, includes last contact)
+
+13 - pdays: number of days that passed by after the client was last contacted from a previous campaign (numeric; 999 means client was not previously contacted)
+
+14 - previous: number of contacts performed before this campaign and for this client (numeric)
+
+15 - poutcome: outcome of the previous marketing campaign (categorical: 'failure','nonexistent','success')
+
+### 5 Social and Economic Variables
+
+16 - emp.var.rate: employment variation rate - quarterly indicator (numeric)
+
+17 - cons.price.idx: consumer price index - monthly indicator (numeric)
+
+18 - cons.conf.idx: consumer confidence index - monthly indicator (numeric)
+
+19 - euribor3m: euribor 3 month rate - daily indicator (numeric)
+
+20 - nr.employed: number of employees - quarterly indicator (numeric)
+
+### Output variable
+
+21 - y - has the client subscribed a term deposit? (binary: 'yes','no')
+
+# Cleaning the Data Set
+
+## Fixing date values
+
+```{r}
+BankM %>%
+  mutate(month = str_to_title(month)) -> BankM
+parse_factor(BankM$month, levels = month.abb) -> BankM$month
+parse_factor(BankM$day_of_week) -> BankM$day_of_week
+glimpse(BankM)
+```
+
+## Changing characters to factors
+
+```{r}
+BankM$job <- as.factor(BankM$job)
+BankM$marital <- as.factor(BankM$marital)
+BankM$education <- as.factor(BankM$education)
+BankM$default <- as.factor(BankM$default)
+BankM$housing <- as.factor(BankM$housing)
+BankM$loan <- as.factor(BankM$loan)
+BankM$contact <- as.factor(BankM$contact)
+BankM$poutcome <- as.factor(BankM$poutcome)
+BankM$y <- as.factor(BankM$y)
+glimpse(BankM)
+```
+
+# Exploratory Data Analysis(EDA)
+
+## Firstly, looking at the age difference between clients that subscribe, and don't subscribe to the term deposits
+
+```{r}
+BankM %>%
+  ggplot(aes(x=y, y=age)) +
+  geom_boxplot() +
+  theme_bw()
+```
+
+Based on the plot above, it is difficult to notice any differences. On a closer look, we can see that range varies for the subcribers, more than the people who do not subscribe.
+
+## Let's look at a histogram of age
+
+```{r}
+BankM %>%
+  ggplot(aes(x=age)) +
+  geom_histogram(bins = 18) +
+  theme_bw()
+```
+
+Based on the histogram above, the majority of the clients seem to be aged between 25 and 60.
+
+## Scatter Plot on Last Contact Duration and Age, Facetted by Education
+
+```{r}
+BankM %>%
+  ggplot(aes(x=age, y=duration, color = y)) +
+  facet_wrap( ~ education) +
+  geom_point() +
+  theme_bw()
+```
+
+From the plot above, it is difficult to derive any insights, except for the fact that the the majorty of people who subcribe or not, are not illiterate.  
+
+## Summary of Dataset
+
+```{r}
+summary(BankM)
+```
+
+# Initial Thoughts
+
+Since the main output variable (y) is binary some of the models we can run are logistic regression, classification trees, linear discriminant analysis, quadratic discriminant analysis, k-nearest neighbor, and support vector machines.
+
+## Checking for Normality
+
+A quick note here, is that we realized, we could not run a Shapiro-Wilkes test for normality, because we have well over 5,000 data points in this sample.
+
+```{r}
+hist((BankM$age))
+qqnorm((BankM$age))
+qqline((BankM$age))
+```
+
+Based on the QQplot above, Age is not normally distributed so we can try doing a log transformation. 
+
+```{r}
+hist(log(BankM$age))
+qqnorm(log(BankM$age))
+qqline(log(BankM$age))
+```
+
+From the QQplot and histogram, age now seems like it is slightly more normally distributed. 
+
+Lets take a look at duration below:
+
+```{r}
+hist((BankM$duration))
+qqnorm((BankM$duration))
+qqline((BankM$duration))
+```
+
+Duration also does not seem normally distributed, so we can try to do a log transformation again.
+
+```{r}
+hist(log(BankM$duration))
+```
+
+After the log transformation, duration now also seems more normally distributed.
+
+Lets take a look at the Campaign variable below:
+
+```{r}
+hist((BankM$campaign))
+qqnorm((BankM$campaign))
+qqline((BankM$campaign))
+```
+
+```{r}
+hist(log(BankM$campaign))
+qqnorm(log(BankM$campaign))
+qqline(log(BankM$campaign))
+```
+
+After doing a log transformation on this variables, the QQplot seems to worsen, so it is better left not transformed.  
+
+# Early Logistic Regression Check
+
+```{r}
+glm.fit = glm(y ~ . -age + log(age), data=BankM, family=binomial) 
+summary(glm.fit)
+```
+
+We can check for significance by assuming a confidence level of 95%, which would mean that alpha = 0.05, to see if variables should be removed. Lasso and stepwise selection may also be good for feature selection, but first let's try using the significance method. The variables log(age), marital, housing, loan, and previous don't seem to have p-values less than 0.05 so we can try to make a reduced model by removing them.
+
+```{r}
+new.glm.fit = glm(y ~ . -age -marital -housing -loan -previous, data=BankM, family=binomial) 
+summary(new.glm.fit)
+```
+
+The AIC for our reduced model is slightly lower at 17172 rather than 17184 which suggests that the reduced model is slightly better. 
+
+## Testing if Multicollinearity Exists
+
+```{r}
+vif(new.glm.fit)
+```
+
+Since the VIF is greater than 5 in some cases, we should be careful about the variables emp.var.rate, cons.price.idx, euribor3m, and nr.employed. We could try best subset selection, Lasso, PCR, or PLS for variable selection here, but let's just try reducing the model here and assessing the model summaries.
+
+```{r}
+small.model = glm(y ~ . -age -marital -housing -loan -previous
+                  -emp.var.rate -cons.price.idx -euribor3m -nr.employed, data=BankM, family=binomial) 
+summary(small.model)
+```
+
+The AIC actually increaded higher than the full model, so this would not be a great model to use.
+
+We run an anova below, to see which is the best model to use. 
+
+```{r}
+anova(small.model, new.glm.fit, glm.fit)
+```
+
+Model 3 has the lowest deviance, and residual deviance, which means that the full model has the lowest variance as expected. 
+
+## Checking all logistic regression models on the whole data set
+
+Lets look at the accuracy rate of model 3.
+
+```{r}
+BankM$y -> y
+levels(BankM$y)
+prob <- predict(glm.fit, type = "response")
+pred1 <- ifelse(prob < 0.5, "no", "yes")
+table(pred1, y)
+mean(y==pred1)
+```
+
+The accuracy rate is 91.12%.
+
+Let take a look at the accuracy rate of the slightly reduced model, which is model 2.
+
+```{r}
+prob2 <- predict(new.glm.fit, type = "response")
+pred2 <- ifelse(prob < 0.5, "no", "yes")
+table(pred2, y)
+mean(y==pred2)
+```
+
+The accuracy rate is 91.12%
+
+Lets take a look at the accuracy rate of the most reduced model, or model 1.
+
+```{r}
+prob3 <- predict(small.model, type = "response")
+pred3 <- ifelse(prob < 0.5, "no", "yes")
+table(pred3, y)
+mean(y==pred3)
+```
+
+The accracy rate is 91.12%. The overall fraction of correct prdictions is about 91.13% for all 3 models which is pretty high.
+
+# Cross Validation
+
+## Setting up the training and testing sets
+
+We set up a random sample of 70% of the data to fit the model then tested it against the remaining 30%.
+
+```{r}
+set.seed(1)
+
+n = length(BankM$y)
+z = sample(n, n*0.7)
+train <- BankM[z, ]
+data.test <- BankM[-z, ]
+y.test <- BankM$y[-z]
+```
+
+## Comparing the testing set on the full model
+
+Let's use the large model to make predictions below:
+
+```{r}
+large.model = glm(y ~ . -age + log(age), family=binomial, data = train) 
+
+large.predict = predict(large.model, data.test, type="response" )
+
+pred1 <- ifelse(large.predict < 0.5, "no", "yes")
+table(pred1, y.test)
+mean(y.test==pred1)
+```
+
+The accuracy ratae is 91.34%
+
+## Comparing Training and testing sets on the slightly reduced model
+
+Lets use the slightly reduced model to make predictions below:
+
+```{r}
+med.model = glm(y ~ . -age -marital -housing -loan -previous, 
+                  family=binomial, 
+                  data = train) 
+
+med.predict = predict(large.model, data.test, type="response" )
+
+pred2 <- ifelse(med.predict < 0.5, "no", "yes")
+table(pred2, y.test)
+mean(y.test==pred2)
+```
+
+The accuracy ratae is 91.34%
+
+## Comparing Training and testing sets on the most reduced model
+
+Lets use the most reduced model to make predictions below:
+
+```{r}
+small.model = glm(y ~ . -age -marital -housing -loan -previous
+                  -emp.var.rate -cons.price.idx -euribor3m -nr.employed,
+                  family=binomial, 
+                  data = train) 
+
+small.predict = predict(large.model, data.test, type="response" )
+
+pred3 <- ifelse(small.predict < 0.5, "no", "yes")
+table(pred3, y.test)
+mean(y.test==pred3)
+```
+
+The accuracy rate is 91.34%
+
+The overall fraction of correct predictions is about 91.35% on the same test set for all 3 models which is pretty high.
+
+## Checking an ROC curve
+
+We can build an ROC curve, to check the model. Since, all 3 models have identical accuracy rates, we decided to only build an ROC curve for the largest model.
+
+```{r}
+myRoc <- roc(y.test, large.predict)
+plot(myRoc)
+```
+
+This is a strong model since the plot generally stays near 1.0 for both sensitivity and specificity.
+
+# Classification Tree
+
+We choose to simply run the classification tree on the full model because logistic regression showed that not much really changes by reducing the model, so we can let the tree function reduce the model itself.
+
+```{r}
+tree.fit = tree(y ~ ., data=train)
+tree.fit
+plot(tree.fit, type="uniform")
+text(tree.fit)
+summary(tree.fit)
+```
+
+The only variables that are used in the construction of this tree, based on the training set, are "nr.employed", "duration", and "month". This also helped us realize how few "y" end up being yes, since only one terminal mode ends in yes, when  nr.employed < 5087.6 and duration > 158.5, it predicts only 2315 values out of 28,831 in the training set will result in a yes. The misclassification error rate of 0.09625 is low for the training set.
+
+
+```{r}
+tree.predict = predict(tree.fit, data.test, type="class" )
+table(tree.predict, y.test)
+mean(y.test == tree.predict)
+```
+
+Simply comparing accuracy here of 90.09% we can see that the classification model is slightly less accurate than the logistic regression model for the same test set.
+
+## Checking if pruning is necessary
+
+```{r}
+cv=cv.tree(tree.fit, FUN = prune.misclass ) 
+cv 
+plot(cv)
+```
+
+Here we see that 3 terminal nodes leads to the lowest misclassification rate. We can compare this result when basing it off of deviance.
+
+```{r}
+cv=cv.tree(tree.fit) 
+cv
+plot(cv)
+```
+
+In contrast, deviance is lowest when all 7 terminal nodes remain. We can still test a pruned tree and compare the results.
+
+```{r}
+pruned = prune.misclass(tree.fit, best=3)
+pruned
+plot(pruned, type="uniform")
+text(pruned)
+summary(pruned)
+tree.predict = predict(pruned, data.test, type="class" )
+table(tree.predict, y.test)
+mean(y.test == tree.predict)
+```
+
+The misclassification rate and the accuracy are the same as the unpruned tree, however the residual mean deviance has slightly increased to 0.572, so relying on the previous model may help reduce some variance. 
+
+# K-Nearest Neighbor
+
+Simply to be more efficient, we decided to only use the variables used in the better classification tree model.
+
+```{r}
+trainx1 <- as.matrix(BankM$nr.employed[z])
+trainx2 <- as.matrix(BankM$duration[z])
+trainx3 <- as.matrix(as.numeric(BankM$month[z]))
+trainx <- as.matrix(cbind(trainx1, trainx2, trainx3))
+
+testx1 <- as.matrix(BankM$nr.employed[-z])
+testx2 <- as.matrix(BankM$duration[-z])
+testx3 <- as.matrix(as.numeric(BankM$month[-z]))
+testx <- as.matrix(cbind(testx1, testx2, testx3))
+
+train.y <- BankM$y[z]
+
+best.k <- -1
+accuracy <- 999999999
+best.accuracy <- -1
+for (i in 1:50) {
+predn <- knn(trainx, testx, train.y, k=i)
+accuracy <- mean(y.test==predn)
+if (accuracy > best.accuracy) {
+best.table <- as.matrix(table(predn, y.test))
+best.k <- i
+best.accuracy <- accuracy
+}
+}
+print(paste("The optimal value of k is",best.k,"with an overall accuracy of",best.accuracy))
+
+best.table
+```
+
+We can see that KNN results in an accuracy of 90.92% which is higher than the classification tree model's accuracy of 90.09%, but still slightly less than the logistic regression model's accuracy of 91.35% for the test set.
+
+# Linear Discriminant Analysis
+
+```{r}
+model.lda <- lda(y ~ nr.employed + duration + as.numeric(month), data = BankM, subset = z, cv=TRUE)
+model.lda
+pred4 <- predict(model.lda, data.test)
+table(pred4$class, y.test)
+mean(y.test==pred4$class)
+```
+
+LDA seems to produce the second worst model since it has an accuracy of about 90.75%, and it is still not as high as the accuracy of the logistic regression.
+
+# Quadratic Discriminant Analysis
+
+```{r}
+model.qda <- qda(y ~ nr.employed + duration + as.numeric(month), family = binomial,
+                 data = BankM, subset = z, cv=TRUE)
+model.qda
+pred5 <- predict(model.qda, data.test)
+table(pred5$class, y.test)
+mean(y.test==pred4$class)
+```
+
+The qda model seems to correctly predict about 90.75% of the test set as well.
+
+# Final Logistic Regression
+
+Our classification tree model was very helpful in reducing all the variables down to just 3 critical variables, so it would be worth testing logistic regression again with just those 3 variables.
+
+```{r}
+log.reg = glm(y ~ nr.employed + duration + month, family=binomial, data = train) 
+
+fin.predict = predict(log.reg, data.test, type="response" )
+
+predf <- ifelse(fin.predict < 0.5, "no", "yes")
+table(predf, y.test)
+mean(y.test==predf)
+```
+
+The most reduced Logistic Regression model predicted with an accuracy rate of 90.60% on the test set.
+
+# Conclusion
+
+To summarize, the full logistic regression model helped us achieve the highest accuracy rate of 91.34%. The second highest accuracy that we got was 90.92%, using the KNN model. In terms of accuracy, the next best models were the LDA and QDA models which both had an accuracy rate of 90.75%. When we retested the logistic regression model on the most reduced set, it was the next best model at 90.60% accuracy. The least accurate model was the classification tree, which gave us an accuracy rate of 90.09%. We had also tried an SVM model, but processing the full model had taken us almost 7 hours, only to give us a "Warning Limit Exceeded" error. We believe this may be due the the limitation of our processing abilities. 
+
+In an overall view, we were able to predict whether a customer would subscribe to a bank term deposit or not, with an accuracy of about 90%, which in general would be considered very high. When we were deciding on cross-validation techniques to use, we decided to simply go with training and testing sets with comparisons on accuracy, rather than k-fold cross validation or leave one out cross validation with comparisons on the Receiver Operating Characteristic (ROC) or brier scores simply because it was a bit less computationally exhaustive on our machines. We also understand that when comparing different sized models, looking for the lowest bayesian information criterion (BIC), akaike information criterion (AIC), Mallow's Cp, or even the largest adjusted R-squared values would have all been viable options, however we simply went with the classifaction tree's variables for model selection. 
+
+Based on the source of the data, we see that it was donated to UCI in 2014. In order to reduce biasness in the dataset, we believe that a more updated sample should be combined to the 2014 data. Another way to reduce biasness in the predictions and hopefully even have a higher prediction accuracy is to combine this Portuguese banking institutions data with other banking institutions from multiple sources.  
+
+### End Results Based on the Test Set
+
+```{r, echo=FALSE}
+tribble(~Rank, ~Model, ~Accuracy,
+        ##----/------------------/-----
+        1, "Full Logistic Regression", 0.9134,
+        2, "K-Nearest Neighbor", 0.9092,
+        3, "Linear Discriminant Analysis", 0.9075,
+        3, "Quadratic Discriminant Analysis", 0.9075,
+        5, "Reduced Logistic Regression", 0.9060,
+        6, "Classification Tree", 0.9009)
+```
+
+
+
+
+
+
